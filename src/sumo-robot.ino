@@ -1,9 +1,38 @@
+#include <Arduino.h>
 #include <FiniteStateMachine.h>
 
+#define MAX_SPEED 255
 
-//#define LED_RED 10
-//#define LED_GREEN 11
-#define LED_BLUE 9
+//#define MIN_ATTACK_DISTANCE 200 // inverse proportion
+//#define MIN_DETECT_DISTANCE 80 // inverse proportion
+
+#define MIN_ATTACK_DISTANCE 400 // test values
+#define MIN_DETECT_DISTANCE 300 // test values
+
+#define ROTATE_LEFT 0
+#define ROTATE_RIGHT 1
+
+#define DISTANCE_PIN 0
+#define MOTOR2_PIN1  3
+#define MOTOR2_PIN2  5
+#define MOTOR1_PIN1  6
+#define MOTOR1_PIN2  9
+
+int lastDistance = -1;
+int lastRotate = -1; 
+
+// Global sensor data
+
+int distance;
+int leftColor;
+int rightColor;
+int leftLight;
+int rightLight;
+
+// Sumo methods forward-declaration
+void startMoving(int speedLeft, int speedRight);
+
+// FSM Globals
 
 //'callback' is function pointer type, to a void function with one pointer parameter (void func(void*))
 typedef void (*callback)(void *);
@@ -14,16 +43,39 @@ unsigned long targetTime = 0;
 callback pDeferredMethod = NULL;
 void *pData = NULL;
 
-// Forward-declaration
-void startLedOn();
-void startLedOff();
+// FSM tools Forward-declaration
+void startFindOpponentLeft();
+void startFindOpponentRight();
+void onFindOponent();
+
+void startCloseIn();
+void onClosingIn();
+void startAttack();
 
 // State consumption method - just see if we need to move to our new state
 void checkTimer(); 
 // Standard deferred action - move to a predetermined state
 void timedTransition(void *pData);
 
-//utility functions
+void cleanupTimer() {
+  targetTime = 0;
+  pDeferredMethod = NULL;
+  pData = NULL;
+
+  //don't forget to stop the motors
+  startMoving(0, 0);
+}
+
+//initialize states & FSM
+State FindOpponentLeft = State(startFindOpponentLeft, onFindOponent, cleanupTimer);
+State FindOpponentRight = State(startFindOpponentRight, onFindOponent, cleanupTimer);
+State CloseIn = State(startCloseIn, checkTimer, cleanupTimer);
+State Attack = State(startAttack, checkTimer, cleanupTimer);
+ 
+FSM sumoStateMachine = FSM(FindOpponentLeft);     //initialize state machine, start in state: FindOpponentLeft
+
+// FSM state implementation
+
 void scheduleMethodCall(unsigned int timeout, callback method, void *pInitData) {
   targetTime = millis() + timeout;
 
@@ -31,34 +83,52 @@ void scheduleMethodCall(unsigned int timeout, callback method, void *pInitData) 
   pData = pInitData;
 }
 
-void cleanupTimer() {
- Serial.println("Cleanup");
- targetTime = 0;
- pDeferredMethod = NULL;
- pData = NULL;
+void startFindOpponentRight() {
 }
 
-//end utility functions 
+void startFindOpponentLeft() {
+  //Rotate left
+  startMoving(0, MAX_SPEED);
 
-//initialize states & FSM
-State On = State(startLedOn, checkTimer, cleanupTimer);
-State Off = State(startLedOff, checkTimer, cleanupTimer);
- 
-FSM ledStateMachine = FSM(On);     //initialize state machine, start in state: On
-
-// FSM state implementation
-
-void startLedOn() {
-  Serial.println("State ON");
-  digitalWrite(LED_BLUE, HIGH);
-
-  scheduleMethodCall(1000, timedTransition, &Off);
+  //TODO: check if changing to the same state works!
+  scheduleMethodCall(100, timedTransition, &FindOpponentLeft);
 }
-void startLedOff() {
-  Serial.println("State OFF");
-  digitalWrite(LED_BLUE, LOW);
 
-  scheduleMethodCall(2000, timedTransition, &On);
+void onFindOponent() {
+  if (distance <= MIN_DETECT_DISTANCE) {
+    //found the enemy!
+    sumoStateMachine.immediateTransitionTo(CloseIn);
+    return;
+  }
+  checkTimer(); //don't forget to call this!
+}
+
+void startCloseIn() {
+  startMoving(MAX_SPEED, MAX_SPEED);
+
+  //unless something interrupts us, go back to the 'find oponent' states
+  scheduleMethodCall(100, timedTransition, &FindOpponentLeft);
+}
+
+void onClosingIn() {
+  if (distance <= MIN_ATTACK_DISTANCE) {
+    //found the enemy!
+    sumoStateMachine.immediateTransitionTo(Attack);
+    return;
+  }
+  if (distance > MIN_DETECT_DISTANCE) {
+    //completely lost the enemy -> start searching again
+    sumoStateMachine.immediateTransitionTo(FindOpponentLeft);
+    return;
+  }
+  checkTimer(); //don't forget to call this!
+}
+
+void startAttack() {
+  startMoving(MAX_SPEED, MAX_SPEED);
+
+  //Ram him for max. 2 second. Then try to find him again
+  scheduleMethodCall(2000, timedTransition, &FindOpponentLeft);
 }
 
 void checkTimer() {
@@ -76,7 +146,7 @@ void checkTimer() {
 void timedTransition(void *pData) {
   if (pData) {
     Serial.println("Performing transition");
-    ledStateMachine.immediateTransitionTo(*((State *)pData));
+    sumoStateMachine.immediateTransitionTo(*((State *)pData));
   } else {
     Serial.println("No data for timed transition");
   }
@@ -85,15 +155,36 @@ void timedTransition(void *pData) {
 
 void setup(){ 
   Serial.begin(115200);
-  //while (!Serial);
-
-  //pinMode(LED_RED, OUTPUT);
-  //pinMode(LED_GREEN, OUTPUT);
-  pinMode(LED_BLUE, OUTPUT);
-
-  ledStateMachine.transitionTo(On);
+  
+  pinMode(MOTOR1_PIN1, OUTPUT);
+  pinMode(MOTOR1_PIN2, OUTPUT);
+  pinMode(MOTOR2_PIN1, OUTPUT);
+  pinMode(MOTOR2_PIN2, OUTPUT);
 }
 
 void loop(){
-  ledStateMachine.update();
+  //TODO: Read all sensors, not just distance
+  distance = analogRead(DISTANCE_PIN);
+
+
+  sumoStateMachine.update();
+}
+
+
+void startMoving(int speedLeft, int speedRight) {
+  if (speedLeft > 0) {
+    analogWrite(MOTOR1_PIN1, speedLeft);
+    analogWrite(MOTOR1_PIN2, 0);
+  }  else {
+    analogWrite(MOTOR1_PIN1, 0);
+    analogWrite(MOTOR1_PIN2, -speedLeft);
+  }
+ 
+  if (speedRight > 0) {
+    analogWrite(MOTOR2_PIN1, speedRight);
+    analogWrite(MOTOR2_PIN2, 0);
+  } else {
+    analogWrite(MOTOR2_PIN1, 0);
+    analogWrite(MOTOR2_PIN2, -speedRight);
+  }
 }
