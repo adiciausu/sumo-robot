@@ -1,0 +1,4 @@
+{
+    "port": "/dev/cu.usbmodem1421",
+    "board": "adafruit:samd:adafruit_feather_m0"
+}
