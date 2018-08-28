@@ -3,11 +3,10 @@
 
 #define MAX_SPEED 255
 
-//#define MIN_ATTACK_DISTANCE 200 // inverse proportion
-//#define MIN_DETECT_DISTANCE 80 // inverse proportion
-
 #define MIN_ATTACK_DISTANCE 400 // test values
 #define MIN_DETECT_DISTANCE 300 // test values
+
+#define MARGIN_TRESHOLD 100 //NO idea what real values should be here
 
 #define ROTATE_LEFT 0
 #define ROTATE_RIGHT 1
@@ -50,7 +49,11 @@ void onFindOponent();
 
 void startCloseIn();
 void onClosingIn();
+
 void startAttack();
+void onAttacking();
+
+void goBack();
 
 // State consumption method - just see if we need to move to our new state
 void checkTimer(); 
@@ -69,9 +72,10 @@ void cleanupTimer() {
 //initialize states & FSM
 State FindOpponentLeft = State(startFindOpponentLeft, onFindOponent, cleanupTimer);
 State FindOpponentRight = State(startFindOpponentRight, onFindOponent, cleanupTimer);
-State CloseIn = State(startCloseIn, checkTimer, cleanupTimer);
-State Attack = State(startAttack, checkTimer, cleanupTimer);
- 
+State CloseIn = State(startCloseIn, onClosingIn, cleanupTimer);
+State Attack = State(startAttack, onAttacking, cleanupTimer);
+State GoBack = State(goBack, checkTimer, cleanupTimer);
+
 FSM sumoStateMachine = FSM(FindOpponentLeft);     //initialize state machine, start in state: FindOpponentLeft
 
 // FSM state implementation
@@ -88,7 +92,7 @@ void startFindOpponentRight() {
 
 void startFindOpponentLeft() {
   //Rotate left
-  startMoving(0, MAX_SPEED);
+  startMoving(-MAX_SPEED, MAX_SPEED);
 
   //TODO: check if changing to the same state works!
   scheduleMethodCall(100, timedTransition, &FindOpponentLeft);
@@ -131,6 +135,26 @@ void startAttack() {
   scheduleMethodCall(2000, timedTransition, &FindOpponentLeft);
 }
 
+void onAttacking() {
+  if (distance > MIN_DETECT_DISTANCE) {
+    //completely lost the enemy -> start searching again
+    sumoStateMachine.immediateTransitionTo(FindOpponentLeft);
+    return;
+  }
+  if (distance > MIN_ATTACK_DISTANCE) {
+    //Oponent ran away, but still ahead. Not much to do..
+  }
+  checkTimer(); //don't forget to call this!
+
+}
+
+void goBack() {
+  startMoving(-MAX_SPEED, -MAX_SPEED);
+
+  //Go back for one full second
+  scheduleMethodCall(1000, timedTransition, &FindOpponentLeft);
+}
+
 void checkTimer() {
   unsigned long now = millis();
   if (targetTime > 0 && now >= targetTime) {    
@@ -166,6 +190,11 @@ void loop(){
   //TODO: Read all sensors, not just distance
   distance = analogRead(DISTANCE_PIN);
 
+  //global condition, will break out of any state
+  if (leftColor >= MARGIN_TRESHOLD || rightColor >= MARGIN_TRESHOLD) {
+    //action will really be executed in the .update() call below
+    sumoStateMachine.transitionTo(GoBack);
+  }
 
   sumoStateMachine.update();
 }
