@@ -1,12 +1,16 @@
 #include <Arduino.h>
 #include <FiniteStateMachine.h>
+#include <QTRSensors.h>
 
 #define MAX_SPEED 255
+#define ROTATE_SPEED 120
+#define CLOSEIN_SPEED 150
 
-#define MIN_ATTACK_DISTANCE 400 // test values
-#define MIN_DETECT_DISTANCE 300 // test values
+#define MIN_ATTACK_DISTANCE 300 // inverse proportion
+#define MIN_DETECT_DISTANCE 170 // inverse proportion
 
-#define MARGIN_TRESHOLD 100 //NO idea what real values should be here
+#define MARGIN_TRESHOLD_L 200
+#define MARGIN_TRESHOLD_R 400
 
 #define ROTATE_LEFT 0
 #define ROTATE_RIGHT 1
@@ -17,14 +21,22 @@
 #define MOTOR1_PIN1  6
 #define MOTOR1_PIN2  9
 
+#define NUM_SENSORS   2     // number of sensors used
+#define TIMEOUT       2500  // waits for 2500 microseconds for sensor outputs to go low
+
+// sensors are connected to pin 7 digital and 8 digital
+QTRSensorsRC qtrrc((unsigned char[]) {
+  7, 8
+},
+NUM_SENSORS, TIMEOUT);
+
 int lastDistance = -1;
 int lastRotate = -1; 
 
 // Global sensor data
 
 int distance;
-int leftColor;
-int rightColor;
+unsigned int sensorValues[NUM_SENSORS];
 int leftLight;
 int rightLight;
 
@@ -60,6 +72,8 @@ void checkTimer();
 // Standard deferred action - move to a predetermined state
 void timedTransition(void *pData);
 
+void onClosingInExpired(void *pData);
+
 void cleanupTimer() {
   targetTime = 0;
   pDeferredMethod = NULL;
@@ -91,15 +105,16 @@ void startFindOpponentRight() {
 }
 
 void startFindOpponentLeft() {
+  Serial.println("start find opponent left state");
   //Rotate left
-  startMoving(-MAX_SPEED, MAX_SPEED);
+  startMoving(-ROTATE_SPEED, ROTATE_SPEED);
 
   //TODO: check if changing to the same state works!
   scheduleMethodCall(100, timedTransition, &FindOpponentLeft);
 }
 
 void onFindOponent() {
-  if (distance <= MIN_DETECT_DISTANCE) {
+  if (distance >= MIN_DETECT_DISTANCE) {
     //found the enemy!
     sumoStateMachine.immediateTransitionTo(CloseIn);
     return;
@@ -108,27 +123,42 @@ void onFindOponent() {
 }
 
 void startCloseIn() {
-  startMoving(MAX_SPEED, MAX_SPEED);
+  Serial.println("start close in state");
+  startMoving(CLOSEIN_SPEED, CLOSEIN_SPEED);
 
   //unless something interrupts us, go back to the 'find oponent' states
-  scheduleMethodCall(100, timedTransition, &FindOpponentLeft);
+  scheduleMethodCall(500, onClosingInExpired, &FindOpponentLeft);
 }
 
 void onClosingIn() {
-  if (distance <= MIN_ATTACK_DISTANCE) {
+  if (distance >= MIN_ATTACK_DISTANCE) {
     //found the enemy!
     sumoStateMachine.immediateTransitionTo(Attack);
     return;
   }
-  if (distance > MIN_DETECT_DISTANCE) {
+  /*
+  if (distance < MIN_DETECT_DISTANCE) {
     //completely lost the enemy -> start searching again
+    Serial.println("Lost enemy");
     sumoStateMachine.immediateTransitionTo(FindOpponentLeft);
     return;
   }
+  */
   checkTimer(); //don't forget to call this!
 }
 
+void onClosingInExpired(void *pData) {
+  if (distance < MIN_DETECT_DISTANCE) {
+    Serial.println("Lost enemy");
+    sumoStateMachine.immediateTransitionTo(FindOpponentLeft);
+  } else {
+    Serial.println("Continue with closein");
+    sumoStateMachine.immediateTransitionTo(CloseIn);
+  }
+}
+
 void startAttack() {
+  Serial.println("start attack state");
   startMoving(MAX_SPEED, MAX_SPEED);
 
   //Ram him for max. 2 second. Then try to find him again
@@ -136,12 +166,14 @@ void startAttack() {
 }
 
 void onAttacking() {
-  if (distance > MIN_DETECT_DISTANCE) {
+  if (distance < MIN_DETECT_DISTANCE) {
     //completely lost the enemy -> start searching again
+    Serial.println("Attack - lost enemy");
     sumoStateMachine.immediateTransitionTo(FindOpponentLeft);
     return;
   }
-  if (distance > MIN_ATTACK_DISTANCE) {
+  if (distance < MIN_ATTACK_DISTANCE) {
+    Serial.println("No longer in attack range");
     //Oponent ran away, but still ahead. Not much to do..
   }
   checkTimer(); //don't forget to call this!
@@ -149,10 +181,18 @@ void onAttacking() {
 }
 
 void goBack() {
-  startMoving(-MAX_SPEED, -MAX_SPEED);
-
-  //Go back for one full second
-  scheduleMethodCall(1000, timedTransition, &FindOpponentLeft);
+  int speedLeft = MAX_SPEED/2;
+  int speedRight = MAX_SPEED/2;
+  if(sensorValues[0] <= MARGIN_TRESHOLD_L) {
+    speedRight = MAX_SPEED;
+  }
+  if(sensorValues[1] <= MARGIN_TRESHOLD_R) {
+    speedLeft = MAX_SPEED;
+  }
+  
+  startMoving(-speedLeft, -speedRight);
+    
+  scheduleMethodCall(500, timedTransition, &FindOpponentLeft);
 }
 
 void checkTimer() {
@@ -169,7 +209,7 @@ void checkTimer() {
 // method is of type 'callback'
 void timedTransition(void *pData) {
   if (pData) {
-    Serial.println("Performing transition");
+    //Serial.println("Performing transition");
     sumoStateMachine.immediateTransitionTo(*((State *)pData));
   } else {
     Serial.println("No data for timed transition");
@@ -178,7 +218,7 @@ void timedTransition(void *pData) {
 
 
 void setup(){ 
-  Serial.begin(115200);
+  Serial.begin(9600);
   
   pinMode(MOTOR1_PIN1, OUTPUT);
   pinMode(MOTOR1_PIN2, OUTPUT);
@@ -189,9 +229,21 @@ void setup(){
 void loop(){
   //TODO: Read all sensors, not just distance
   distance = analogRead(DISTANCE_PIN);
+  qtrrc.read(sensorValues);
+
+
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.print("; Color sensors: ");
+  Serial.print(sensorValues[0]);
+  Serial.print(", ");
+  Serial.print(sensorValues[1]);
+  
+  Serial.println("");
+  
 
   //global condition, will break out of any state
-  if (leftColor >= MARGIN_TRESHOLD || rightColor >= MARGIN_TRESHOLD) {
+  if (sensorValues[0] <= MARGIN_TRESHOLD_L || sensorValues[1] <= MARGIN_TRESHOLD_R) {
     //action will really be executed in the .update() call below
     sumoStateMachine.transitionTo(GoBack);
   }
