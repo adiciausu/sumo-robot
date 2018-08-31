@@ -9,8 +9,8 @@
 #define MIN_ATTACK_DISTANCE 300 // inverse proportion
 #define MIN_DETECT_DISTANCE 170 // inverse proportion
 
-#define MARGIN_TRESHOLD_L 200
-#define MARGIN_TRESHOLD_R 400
+#define MARGIN_TRESHOLD_L 200 //80
+#define MARGIN_TRESHOLD_R 750 //300
 
 #define ROTATE_LEFT 0
 #define ROTATE_RIGHT 1
@@ -224,6 +224,8 @@ void setup(){
   pinMode(MOTOR1_PIN2, OUTPUT);
   pinMode(MOTOR2_PIN1, OUTPUT);
   pinMode(MOTOR2_PIN2, OUTPUT);
+
+  delay(5000);
 }
 
 void loop(){
@@ -253,6 +255,7 @@ void loop(){
 
 
 void startMoving(int speedLeft, int speedRight) {
+  //return;
   if (speedLeft > 0) {
     analogWrite(MOTOR1_PIN1, speedLeft);
     analogWrite(MOTOR1_PIN2, 0);
