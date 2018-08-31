@@ -2,18 +2,23 @@
 #include <FiniteStateMachine.h>
 #include <QTRSensors.h>
 
+/*
+ *    DEBUGGING helpers. Uncomment to enable their behavior
+ */
+
+//#define NO_GOBACK
+//#define NO_MOVING
+
+
 #define MAX_SPEED 255
-#define ROTATE_SPEED 120
+#define ROTATE_SPEED 160
 #define CLOSEIN_SPEED 150
 
 #define MIN_ATTACK_DISTANCE 300 // inverse proportion
 #define MIN_DETECT_DISTANCE 170 // inverse proportion
 
-#define MARGIN_TRESHOLD_L 200 //80
-#define MARGIN_TRESHOLD_R 750 //300
-
-#define ROTATE_LEFT 0
-#define ROTATE_RIGHT 1
+#define MARGIN_TRESHOLD_L 200 //80 (only white edge)
+#define MARGIN_TRESHOLD_R 750 //300 (only white edge)
 
 #define DISTANCE_PIN 0
 #define MOTOR2_PIN1  3
@@ -30,8 +35,7 @@ QTRSensorsRC qtrrc((unsigned char[]) {
 },
 NUM_SENSORS, TIMEOUT);
 
-int lastDistance = -1;
-int lastRotate = -1; 
+int SpinDirection;
 
 // Global sensor data
 
@@ -55,8 +59,7 @@ callback pDeferredMethod = NULL;
 void *pData = NULL;
 
 // FSM tools Forward-declaration
-void startFindOpponentLeft();
-void startFindOpponentRight();
+void startFindOpponent();
 void onFindOponent();
 
 void startCloseIn();
@@ -79,18 +82,17 @@ void cleanupTimer() {
   pDeferredMethod = NULL;
   pData = NULL;
 
-  //don't forget to stop the motors
-  startMoving(0, 0);
+  //Motors don't usually need to be stopped. The next state will issue a new command for them anyway
+  //startMoving(0, 0);
 }
 
 //initialize states & FSM
-State FindOpponentLeft = State(startFindOpponentLeft, onFindOponent, cleanupTimer);
-State FindOpponentRight = State(startFindOpponentRight, onFindOponent, cleanupTimer);
+State FindOpponent = State(startFindOpponent, onFindOponent, cleanupTimer);
 State CloseIn = State(startCloseIn, onClosingIn, cleanupTimer);
 State Attack = State(startAttack, onAttacking, cleanupTimer);
 State GoBack = State(goBack, checkTimer, cleanupTimer);
 
-FSM sumoStateMachine = FSM(FindOpponentLeft);     //initialize state machine, start in state: FindOpponentLeft
+FSM sumoStateMachine = FSM(FindOpponent);  //initialize state machine, start in state: FindOpponent
 
 // FSM state implementation
 
@@ -101,22 +103,48 @@ void scheduleMethodCall(unsigned int timeout, callback method, void *pInitData) 
   pData = pInitData;
 }
 
-void startFindOpponentRight() {
+
+//callback to reverse the rotation direction
+void reverseRotation(void*);
+
+//common implementation for both State init and reverRotation above
+void startSpinning() {
+   startMoving(-ROTATE_SPEED * SpinDirection, ROTATE_SPEED * SpinDirection);
+  
+  //Move differently after a whole rotation
+  //TODO: figure out how long it takes to do a full rotation
+  scheduleMethodCall(2500, reverseRotation, &FindOpponent);
 }
 
-void startFindOpponentLeft() {
-  Serial.println("start find opponent left state");
-  //Rotate left
-  startMoving(-ROTATE_SPEED, ROTATE_SPEED);
+void reverseRotation(void*) {
+  
+  SpinDirection = -SpinDirection;
+  if (SpinDirection > 0) {
+    Serial.println("Reverse spinning - LEFT spin");
+  } else {
+    Serial.println("Reverse spinning - Right spin");
+  }
 
-  //TODO: check if changing to the same state works!
-  scheduleMethodCall(100, timedTransition, &FindOpponentLeft);
+  startSpinning();  
+}
+
+void startFindOpponent() {
+  //Global variable
+  SpinDirection = 1; //default - turn to the left (counterclockwise)
+  if (random(0, 2) == 0) {
+    Serial.println("start find opponent Right state");
+    SpinDirection = -1; //right/clockwise
+  } else {
+    Serial.println("start find opponent Left state");
+  }
+
+  startSpinning(); 
 }
 
 void onFindOponent() {
   if (distance >= MIN_DETECT_DISTANCE) {
     //found the enemy!
-    sumoStateMachine.immediateTransitionTo(CloseIn);
+    //sumoStateMachine.immediateTransitionTo(CloseIn);
     return;
   }
   checkTimer(); //don't forget to call this!
@@ -127,7 +155,7 @@ void startCloseIn() {
   startMoving(CLOSEIN_SPEED, CLOSEIN_SPEED);
 
   //unless something interrupts us, go back to the 'find oponent' states
-  scheduleMethodCall(500, onClosingInExpired, &FindOpponentLeft);
+  scheduleMethodCall(500, onClosingInExpired, &FindOpponent);
 }
 
 void onClosingIn() {
@@ -140,7 +168,7 @@ void onClosingIn() {
   if (distance < MIN_DETECT_DISTANCE) {
     //completely lost the enemy -> start searching again
     Serial.println("Lost enemy");
-    sumoStateMachine.immediateTransitionTo(FindOpponentLeft);
+    sumoStateMachine.immediateTransitionTo(FindOpponent);
     return;
   }
   */
@@ -150,7 +178,7 @@ void onClosingIn() {
 void onClosingInExpired(void *pData) {
   if (distance < MIN_DETECT_DISTANCE) {
     Serial.println("Lost enemy");
-    sumoStateMachine.immediateTransitionTo(FindOpponentLeft);
+    sumoStateMachine.immediateTransitionTo(FindOpponent);
   } else {
     Serial.println("Continue with closein");
     sumoStateMachine.immediateTransitionTo(CloseIn);
@@ -162,14 +190,14 @@ void startAttack() {
   startMoving(MAX_SPEED, MAX_SPEED);
 
   //Ram him for max. 2 second. Then try to find him again
-  scheduleMethodCall(2000, timedTransition, &FindOpponentLeft);
+  scheduleMethodCall(2000, timedTransition, &FindOpponent);
 }
 
 void onAttacking() {
   if (distance < MIN_DETECT_DISTANCE) {
     //completely lost the enemy -> start searching again
     Serial.println("Attack - lost enemy");
-    sumoStateMachine.immediateTransitionTo(FindOpponentLeft);
+    sumoStateMachine.immediateTransitionTo(FindOpponent);
     return;
   }
   if (distance < MIN_ATTACK_DISTANCE) {
@@ -192,7 +220,7 @@ void goBack() {
   
   startMoving(-speedLeft, -speedRight);
     
-  scheduleMethodCall(500, timedTransition, &FindOpponentLeft);
+  scheduleMethodCall(500, timedTransition, &FindOpponent);
 }
 
 void checkTimer() {
@@ -225,6 +253,9 @@ void setup(){
   pinMode(MOTOR2_PIN1, OUTPUT);
   pinMode(MOTOR2_PIN2, OUTPUT);
 
+  //random number generator init
+  randomSeed(analogRead(0));
+
   delay(5000);
 }
 
@@ -243,19 +274,23 @@ void loop(){
   
   Serial.println("");
   
-
+#ifndef NO_GOBACK
   //global condition, will break out of any state
   if (sensorValues[0] <= MARGIN_TRESHOLD_L || sensorValues[1] <= MARGIN_TRESHOLD_R) {
     //action will really be executed in the .update() call below
     sumoStateMachine.transitionTo(GoBack);
   }
+#endif
 
   sumoStateMachine.update();
 }
 
 
 void startMoving(int speedLeft, int speedRight) {
-  //return;
+#ifdef NO_MOVING
+  return;
+ #endif
+  
   if (speedLeft > 0) {
     analogWrite(MOTOR1_PIN1, speedLeft);
     analogWrite(MOTOR1_PIN2, 0);
