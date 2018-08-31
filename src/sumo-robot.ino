@@ -6,6 +6,8 @@
  *    DEBUGGING helpers. Uncomment to enable their behavior
  */
 
+//#define NO_WAIT_AT_START
+//#define NO_SWITCH_DIRECTION
 //#define NO_GOBACK
 //#define NO_MOVING
 
@@ -113,7 +115,10 @@ void startSpinning() {
   
   //Move differently after a whole rotation
   //TODO: figure out how long it takes to do a full rotation
+
+#ifndef NO_SWITCH_DIRECTION  
   scheduleMethodCall(2500, reverseRotation, &FindOpponent);
+#endif
 }
 
 void reverseRotation(void*) {
@@ -256,7 +261,9 @@ void setup(){
   //random number generator init
   randomSeed(analogRead(0));
 
+#ifndef NO_WAIT_AT_START
   delay(5000);
+#endif
 }
 
 void loop(){
