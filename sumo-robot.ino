@@ -47,7 +47,7 @@ void detectAndAttack(){
     moveForward(100); // move closer
   } else {
     Serial.println("Rotate to find!");
-    rotateLeft(); // rotate to find opponent
+    rotateLeft(100); // rotate to find opponent
   }
 }
 
