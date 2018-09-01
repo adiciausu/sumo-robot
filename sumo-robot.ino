@@ -11,11 +11,11 @@
 //#define NO_WAIT_AT_START
 //#define NO_SWITCH_DIRECTION
 #define NO_GOBACK
-//#define NO_MOVING
+#define NO_MOVING
 
 //#define ONLY_ROTATE
 
-#define LOG_SENSOR_READINGS
+//#define LOG_SENSOR_READINGS
 
 #define MAX_SPEED 255
 #define ROTATE_SPEED 160
@@ -24,6 +24,7 @@
 #define QUICK_ROTATE_SPEED 255
 #define QUICK_ROTATE_TIME 800
 #define TURN_180_LIGHT_TIME 1200
+
 
 #define MIN_ATTACK_DISTANCE 300 // inverse proportion
 #define MIN_DETECT_DISTANCE 170 // inverse proportion
@@ -81,6 +82,7 @@ void *pData = NULL;
 
 // FSM tools Forward-declaration
 void startQuick180();
+void onQuick180();
 
 void startFindOpponent();
 void onFindOponent();
@@ -96,8 +98,11 @@ void goBack();
 void startRamBackwards();
 void onRamBackwards();
 void start180Turn();
+void on180Turn();
 
 void doNothing();
+
+bool willSwitchToAttackState();
 
 // State consumption method - just see if we need to move to our new state
 void checkTimer(); 
@@ -106,6 +111,7 @@ void timedTransition(void *pData);
 
 void onClosingInExpired(void *pData);
 
+int getBlinkState() { return millis() % 100 < 50 ? HIGH : LOW; }
 void clearLEDs() {
   digitalWrite(LED_YELLOW, LOW);
   digitalWrite(LED_BLUE, LOW);
@@ -123,7 +129,7 @@ void cleanupTimer() {
 }
 
 //initialize states & FSM
-State Quick180 = State(startQuick180, onFindOponent, cleanupTimer);
+State Quick180 = State(startQuick180, onQuick180, cleanupTimer);
 State FindOpponent = State(startFindOpponent, onFindOponent, cleanupTimer);
 State CloseIn = State(startCloseIn, onClosingIn, cleanupTimer);
 State Attack = State(startAttack, onAttacking, cleanupTimer);
@@ -131,9 +137,10 @@ State GoBack = State(goBack, checkTimer, cleanupTimer);
 State DoNothing = State(doNothing);
 
 State RamBackwards = State(startRamBackwards, onRamBackwards, cleanupTimer); //TODO: implement
-State TurnOnBackLight = State(start180Turn, onFindOponent, cleanupTimer);
+State TurnOnBackLight = State(start180Turn, on180Turn, cleanupTimer);
 State SweepLeftRight = State(doNothing); //TODO: implement
 State Forfeit = State(doNothing); //TODO: implement
+
 
 FSM sumoStateMachine = FSM(Quick180);  //initialize state machine, start in state: FindOpponent
 
@@ -153,10 +160,17 @@ void startQuick180() {
 #endif
 
   Serial.println("State - Quick180");
-  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_BLUE, HIGH); //actually will be a blink action
   
   startMoving(-QUICK_ROTATE_SPEED, QUICK_ROTATE_SPEED);
   scheduleMethodCall(QUICK_ROTATE_TIME, timedTransition, &FindOpponent);
+}
+
+//Just needed to blink the blue led
+void onQuick180() {
+  digitalWrite(LED_BLUE, getBlinkState());
+  
+  onFindOponent();
 }
 
 //callback to reverse the rotation direction
@@ -203,20 +217,30 @@ void startFindOpponent() {
   startSpinning(); 
 }
 
-void onFindOponent() {
-  if (distance >= MIN_ATTACK_DISTANCE) {
+bool willSwitchToAttackState() {
+    if (distance >= MIN_ATTACK_DISTANCE) {
     //found the enemy!
 #ifndef ONLY_ROTATE    
     sumoStateMachine.immediateTransitionTo(Attack);
-    return;
+    return true;
 #endif
   }
   if (distance >= MIN_DETECT_DISTANCE) {
     //found the enemy!
 #ifndef ONLY_ROTATE    
     sumoStateMachine.immediateTransitionTo(CloseIn);
-    return;
+    return true;
 #endif
+  }
+
+  return false;
+
+}
+
+void onFindOponent() {
+
+  if (willSwitchToAttackState()) {
+    return;
   }
 
   if (leftLight < LIGHT_LIMIT_L && rightLight < LIGHT_LIMIT_R) {
@@ -225,14 +249,14 @@ void onFindOponent() {
     return;
   }
 
-  //check each direction
-  if (leftLight < LIGHT_LIMIT_L) {
+  //check each direction - but only if we're not spinning that way already
+  if (leftLight < LIGHT_LIMIT_L && !sumoStateMachine.isInState(TurnOnBackLight) && SpinDirection != 1) {
     Serial.println("Oponent at back Left - Turn right");
     SpinDirection = 1;
     sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
     return;
   }
-  if (rightLight < LIGHT_LIMIT_R) {
+  if (rightLight < LIGHT_LIMIT_R && !sumoStateMachine.isInState(TurnOnBackLight) && SpinDirection != -1) {
     Serial.println("Oponent at back Right - Turn left");
     SpinDirection = -1;
     sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
@@ -251,7 +275,14 @@ void startRamBackwards() {
 }
 
 void onRamBackwards() {
-  //TODO: also check distance?
+  int blinkSignal = getBlinkState();
+  
+  digitalWrite(LED_RED, blinkSignal);
+  digitalWrite(LED_BLUE, blinkSignal);
+  
+  if (willSwitchToAttackState()) {
+    return;
+  }
 
   if (leftLight > LIGHT_LIMIT_L && rightLight > LIGHT_LIMIT_R) {
     Serial.println("Ram backward - lost completely");
@@ -278,13 +309,24 @@ void onRamBackwards() {
 
 void start180Turn() {
   Serial.println("State - TurnOnBackLight");
+  //actually one of the LEDs will blink
   digitalWrite(LED_RED, HIGH);
-  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_BLUE, HIGH);
 
   startMoving(SpinDirection > 0 ? MAX_SPEED : 0, SpinDirection > 0 ? 0: MAX_SPEED);
   
   //TODO: figure out how long it takes to do a full rotation
   scheduleMethodCall(TURN_180_LIGHT_TIME, timedTransition, &FindOpponent);
+}
+
+//only needed for the blinking
+void on180Turn() {
+  if (SpinDirection > 0) {
+    digitalWrite(LED_RED, getBlinkState());
+  } else {
+    digitalWrite(LED_BLUE, getBlinkState());
+  }
+  onFindOponent();
 }
 
 void startCloseIn() {

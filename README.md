@@ -9,8 +9,11 @@ Trello board: https://trello.com/b/zBaGyVTT
 
 | State        | Yellow           | Blue  | Red |
 | ------------- |------------- | ----- | ----- |
-| Quick180     | X |  | |
+| Quick180     |  | Blink | |
 | FindOponent     | X | X | |
+| SweepLeftRight     |  | X | X |
 | CloseIn     |  | X | |
 | Attack     |  |  | X |
-| GoBack     | X | X | X |
+| RamBackwards     |  | Blink | Blink |
+| TurnOnBackLight - right    |  | X | Blink |
+| TurnOnBackLight - left    |  | Blink | X |
