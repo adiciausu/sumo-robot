@@ -15,12 +15,15 @@
 
 //#define ONLY_ROTATE
 
-//#define LOG_SENSOR_READINGS
-
+#define LOG_SENSOR_READINGS
 
 #define MAX_SPEED 255
 #define ROTATE_SPEED 160
 #define CLOSEIN_SPEED 150
+
+#define QUICK_ROTATE_SPEED 255
+#define QUICK_ROTATE_TIME 800
+#define TURN_180_LIGHT_TIME 1200
 
 #define MIN_ATTACK_DISTANCE 300 // inverse proportion
 #define MIN_DETECT_DISTANCE 170 // inverse proportion
@@ -28,7 +31,12 @@
 #define MARGIN_TRESHOLD_L 200 //80 (only white edge)
 #define MARGIN_TRESHOLD_R 750 //300 (only white edge)
 
+#define LIGHT_LIMIT_L 60
+#define LIGHT_LIMIT_R 60
+
 #define DISTANCE_PIN 0
+#define LIGHT_LEFT_SENSOR 1
+#define LIGHT_RIGHT_SENSOR 2
 #define MOTOR2_PIN1  3
 #define MOTOR2_PIN2  5
 #define MOTOR1_PIN1  6
@@ -85,6 +93,10 @@ void onAttacking();
 
 void goBack();
 
+void startRamBackwards();
+void onRamBackwards();
+void start180Turn();
+
 void doNothing();
 
 // State consumption method - just see if we need to move to our new state
@@ -118,6 +130,11 @@ State Attack = State(startAttack, onAttacking, cleanupTimer);
 State GoBack = State(goBack, checkTimer, cleanupTimer);
 State DoNothing = State(doNothing);
 
+State RamBackwards = State(startRamBackwards, onRamBackwards, cleanupTimer); //TODO: implement
+State TurnOnBackLight = State(start180Turn, onFindOponent, cleanupTimer);
+State SweepLeftRight = State(doNothing); //TODO: implement
+State Forfeit = State(doNothing); //TODO: implement
+
 FSM sumoStateMachine = FSM(Quick180);  //initialize state machine, start in state: FindOpponent
 
 // FSM state implementation
@@ -135,15 +152,11 @@ void startQuick180() {
   return;
 #endif
 
-#define QUICK_ROTATE_SPEED 255
-#define QUICK_ROTATE_TIME 800
-
   Serial.println("State - Quick180");
   digitalWrite(LED_YELLOW, HIGH);
   
   startMoving(-QUICK_ROTATE_SPEED, QUICK_ROTATE_SPEED);
   scheduleMethodCall(QUICK_ROTATE_TIME, timedTransition, &FindOpponent);
-  //scheduleMethodCall(QUICK_ROTATE_TIME, timedTransition, &DoNothing);
 }
 
 //callback to reverse the rotation direction
@@ -191,6 +204,13 @@ void startFindOpponent() {
 }
 
 void onFindOponent() {
+  if (distance >= MIN_ATTACK_DISTANCE) {
+    //found the enemy!
+#ifndef ONLY_ROTATE    
+    sumoStateMachine.immediateTransitionTo(Attack);
+    return;
+#endif
+  }
   if (distance >= MIN_DETECT_DISTANCE) {
     //found the enemy!
 #ifndef ONLY_ROTATE    
@@ -198,7 +218,73 @@ void onFindOponent() {
     return;
 #endif
   }
+
+  if (leftLight < LIGHT_LIMIT_L && rightLight < LIGHT_LIMIT_R) {
+    Serial.println("Oponent at back - Ram backward");
+    sumoStateMachine.immediateTransitionTo(RamBackwards);
+    return;
+  }
+
+  //check each direction
+  if (leftLight < LIGHT_LIMIT_L) {
+    Serial.println("Oponent at back Left - Turn right");
+    SpinDirection = 1;
+    sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
+    return;
+  }
+  if (rightLight < LIGHT_LIMIT_R) {
+    Serial.println("Oponent at back Right - Turn left");
+    SpinDirection = -1;
+    sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
+    return;
+  }
+  
   checkTimer(); //don't forget to call this!
+}
+
+void startRamBackwards() {
+  Serial.println("State - RamBackwards");
+  digitalWrite(LED_RED, HIGH);
+  digitalWrite(LED_BLUE, HIGH);
+
+  startMoving(-MAX_SPEED, -MAX_SPEED);
+}
+
+void onRamBackwards() {
+  //TODO: also check distance?
+
+  if (leftLight > LIGHT_LIMIT_L && rightLight > LIGHT_LIMIT_R) {
+    Serial.println("Ram backward - lost completely");
+    sumoStateMachine.immediateTransitionTo(Quick180);
+    return;
+  }
+  //only one sensor might lose it
+  if (leftLight > LIGHT_LIMIT_L) {
+    Serial.println("Ram backward - lost on Left -> turn right");
+    SpinDirection = 1;
+    sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
+    return;    
+  }
+  if (rightLight > LIGHT_LIMIT_R) {
+    Serial.println("Ram backward - lost on Right -> turn Left");
+    SpinDirection = -1;
+    sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
+    return;    
+  }
+  
+  checkTimer(); //don't forget to call this!
+}
+
+
+void start180Turn() {
+  Serial.println("State - TurnOnBackLight");
+  digitalWrite(LED_RED, HIGH);
+  digitalWrite(LED_YELLOW, HIGH);
+
+  startMoving(SpinDirection > 0 ? MAX_SPEED : 0, SpinDirection > 0 ? 0: MAX_SPEED);
+  
+  //TODO: figure out how long it takes to do a full rotation
+  scheduleMethodCall(TURN_180_LIGHT_TIME, timedTransition, &FindOpponent);
 }
 
 void startCloseIn() {
@@ -347,8 +433,14 @@ void setup(){
 }
 
 void loop(){
-  //TODO: Also read light sensors
+  // From tests: 6ms between loop execution
+  //Serial.println(millis());
+
+  //Read all sensors
   distance = analogRead(DISTANCE_PIN);
+  leftLight = analogRead(LIGHT_LEFT_SENSOR);
+  rightLight = analogRead(LIGHT_RIGHT_SENSOR);
+
   qtrrc.read(sensorValues);
 
 #ifdef LOG_SENSOR_READINGS
@@ -358,6 +450,10 @@ void loop(){
   Serial.print(sensorValues[0]);
   Serial.print(", ");
   Serial.print(sensorValues[1]);
+  Serial.print("; Light:  ");
+  Serial.print(leftLight);
+  Serial.print(", ");
+  Serial.print(rightLight);
   
   Serial.println("");
 #endif
