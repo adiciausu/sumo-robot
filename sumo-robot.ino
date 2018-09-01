@@ -11,11 +11,13 @@
 //#define NO_WAIT_AT_START
 //#define NO_SWITCH_DIRECTION
 #define NO_GOBACK
-#define NO_MOVING
+//#define NO_MOVING
+//#define NO_SWEEP
+//#define NO_LIGHT_SENSORS
 
 //#define ONLY_ROTATE
 
-//#define LOG_SENSOR_READINGS
+#define LOG_SENSOR_READINGS
 
 #define MAX_SPEED 255
 #define ROTATE_SPEED 160
@@ -25,6 +27,8 @@
 #define QUICK_ROTATE_TIME 800
 #define TURN_180_LIGHT_TIME 1200
 
+#define SWEEP_SPEED 180
+#define SWEEP_TIME 300
 
 #define MIN_ATTACK_DISTANCE 300 // inverse proportion
 #define MIN_DETECT_DISTANCE 170 // inverse proportion
@@ -52,7 +56,7 @@ QTRSensorsRC qtrrc((unsigned char[]) {
 },
 NUM_SENSORS, TIMEOUT);
 
-int SpinDirection;
+int SpinDirection = 1;
 
 // Global sensor data
 
@@ -81,26 +85,33 @@ callback pDeferredMethod = NULL;
 void *pData = NULL;
 
 // FSM tools Forward-declaration
+
+// Oponent finding states
 void startQuick180();
 void onQuick180();
 
 void startFindOpponent();
 void onFindOponent();
 
+void startSweep();
+
+// Attack & attack preparation states
 void startCloseIn();
 void onClosingIn();
 
 void startAttack();
 void onAttacking();
 
+// Boundaries & special cases
 void goBack();
+void doNothing();
+void forfeit();
 
+// Light-sensor states
 void startRamBackwards();
 void onRamBackwards();
 void start180Turn();
 void on180Turn();
-
-void doNothing();
 
 bool willSwitchToAttackState();
 
@@ -131,18 +142,32 @@ void cleanupTimer() {
 //initialize states & FSM
 State Quick180 = State(startQuick180, onQuick180, cleanupTimer);
 State FindOpponent = State(startFindOpponent, onFindOponent, cleanupTimer);
+State SweepLeftRight = State(startSweep, onFindOponent, cleanupTimer);
+
 State CloseIn = State(startCloseIn, onClosingIn, cleanupTimer);
 State Attack = State(startAttack, onAttacking, cleanupTimer);
+
 State GoBack = State(goBack, checkTimer, cleanupTimer);
 State DoNothing = State(doNothing);
+State Forfeit = State(forfeit);
 
-State RamBackwards = State(startRamBackwards, onRamBackwards, cleanupTimer); //TODO: implement
+State RamBackwards = State(startRamBackwards, onRamBackwards, cleanupTimer);
 State TurnOnBackLight = State(start180Turn, on180Turn, cleanupTimer);
-State SweepLeftRight = State(doNothing); //TODO: implement
-State Forfeit = State(doNothing); //TODO: implement
 
+#ifdef NO_QUICK_180 
+  #define START_STATE FindOpponent
+#else
+  #define START_STATE Quick180
+#endif
 
-FSM sumoStateMachine = FSM(Quick180);  //initialize state machine, start in state: FindOpponent
+FSM sumoStateMachine = FSM(START_STATE);
+
+#ifdef NO_SWEEP 
+  #define LOCK_LOST_STATE FindOpponent
+#else 
+  #define LOCK_LOST_STATE SweepLeftRight
+#endif
+
 
 // FSM state implementation
 
@@ -154,16 +179,12 @@ void scheduleMethodCall(unsigned int timeout, callback method, void *pInitData) 
 }
 
 void startQuick180() {
-#ifdef NO_QUICK_180
-  sumoStateMachine.transitionTo(FindOpponent);
-  return;
-#endif
-
   Serial.println("State - Quick180");
   digitalWrite(LED_BLUE, HIGH); //actually will be a blink action
   
   startMoving(-QUICK_ROTATE_SPEED, QUICK_ROTATE_SPEED);
-  scheduleMethodCall(QUICK_ROTATE_TIME, timedTransition, &FindOpponent);
+  //Maybe always switch to FindOponent since we don't really know if he's here or not?
+  scheduleMethodCall(QUICK_ROTATE_TIME, timedTransition, &LOCK_LOST_STATE); 
 }
 
 //Just needed to blink the blue led
@@ -184,7 +205,7 @@ void startSpinning() {
   //TODO: figure out how long it takes to do a full rotation
 
 #ifndef NO_SWITCH_DIRECTION  
-  scheduleMethodCall(2500, reverseRotation, &FindOpponent);
+  scheduleMethodCall(2500, reverseRotation, NULL);
 #endif
 }
 
@@ -217,6 +238,29 @@ void startFindOpponent() {
   startSpinning(); 
 }
 
+void reverseSweep(void *) {
+
+  SpinDirection = -SpinDirection;
+  Serial.println("Reverse Sweep - LEFT");
+  
+  startMoving(-SWEEP_SPEED * SpinDirection, SWEEP_SPEED * SpinDirection);
+  //wait for twice as long so we don't just get back to the origin
+  scheduleMethodCall(2*SWEEP_TIME, timedTransition, &FindOpponent);
+}
+
+void startSweep() {
+  Serial.println("State - Start sweep");
+  digitalWrite(LED_RED, HIGH);
+  digitalWrite(LED_BLUE, HIGH);
+
+  //start oposite to whatever we were doing before this. Not sure it's helpful
+  SpinDirection = -SpinDirection;
+
+  startMoving(-SWEEP_SPEED * SpinDirection, SWEEP_SPEED * SpinDirection);
+
+  scheduleMethodCall(SWEEP_TIME, reverseSweep, NULL);
+}
+
 bool willSwitchToAttackState() {
     if (distance >= MIN_ATTACK_DISTANCE) {
     //found the enemy!
@@ -237,16 +281,15 @@ bool willSwitchToAttackState() {
 
 }
 
-void onFindOponent() {
-
-  if (willSwitchToAttackState()) {
-    return;
-  }
+bool willSwitchBasedOnLightLevels() {
+#ifdef NO_LIGHT_SENSORS
+  return false;
+#endif
 
   if (leftLight < LIGHT_LIMIT_L && rightLight < LIGHT_LIMIT_R) {
     Serial.println("Oponent at back - Ram backward");
     sumoStateMachine.immediateTransitionTo(RamBackwards);
-    return;
+    return true;
   }
 
   //check each direction - but only if we're not spinning that way already
@@ -254,12 +297,25 @@ void onFindOponent() {
     Serial.println("Oponent at back Left - Turn right");
     SpinDirection = 1;
     sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
-    return;
+    return true;
   }
   if (rightLight < LIGHT_LIMIT_R && !sumoStateMachine.isInState(TurnOnBackLight) && SpinDirection != -1) {
     Serial.println("Oponent at back Right - Turn left");
     SpinDirection = -1;
     sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
+    return true;
+  }
+
+  return false;
+}
+
+void onFindOponent() {
+
+  if (willSwitchToAttackState()) {
+    return;
+  }
+
+  if (willSwitchBasedOnLightLevels()) {
     return;
   }
   
@@ -284,25 +340,26 @@ void onRamBackwards() {
     return;
   }
 
+  //Check if we should still be pushing backwards
   if (leftLight > LIGHT_LIMIT_L && rightLight > LIGHT_LIMIT_R) {
     Serial.println("Ram backward - lost completely");
     sumoStateMachine.immediateTransitionTo(Quick180);
-    return;
+    return true;
   }
   //only one sensor might lose it
   if (leftLight > LIGHT_LIMIT_L) {
     Serial.println("Ram backward - lost on Left -> turn right");
     SpinDirection = 1;
     sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
-    return;    
+    return true;    
   }
   if (rightLight > LIGHT_LIMIT_R) {
     Serial.println("Ram backward - lost on Right -> turn Left");
     SpinDirection = -1;
     sumoStateMachine.immediateTransitionTo(TurnOnBackLight);
-    return;    
+    return true;    
   }
-  
+
   checkTimer(); //don't forget to call this!
 }
 
@@ -316,7 +373,7 @@ void start180Turn() {
   startMoving(SpinDirection > 0 ? MAX_SPEED : 0, SpinDirection > 0 ? 0: MAX_SPEED);
   
   //TODO: figure out how long it takes to do a full rotation
-  scheduleMethodCall(TURN_180_LIGHT_TIME, timedTransition, &FindOpponent);
+  scheduleMethodCall(TURN_180_LIGHT_TIME, timedTransition, &LOCK_LOST_STATE);
 }
 
 //only needed for the blinking
@@ -336,7 +393,7 @@ void startCloseIn() {
   startMoving(CLOSEIN_SPEED, CLOSEIN_SPEED);
 
   //unless something interrupts us, go back to the 'find oponent' states
-  scheduleMethodCall(500, onClosingInExpired, &FindOpponent);
+  scheduleMethodCall(1000, onClosingInExpired, &LOCK_LOST_STATE);
 }
 
 void onClosingIn() {
@@ -347,21 +404,22 @@ void onClosingIn() {
     return;
 #endif
   }
+  //TODO: why is this being triggered?
   /*
   if (distance < MIN_DETECT_DISTANCE) {
     //completely lost the enemy -> start searching again
     Serial.println("Lost enemy");
-    sumoStateMachine.immediateTransitionTo(FindOpponent);
+    sumoStateMachine.immediateTransitionTo(LOCK_LOST_STATE);
     return;
   }
   */
   checkTimer(); //don't forget to call this!
 }
 
-void onClosingInExpired(void *pData) {
+void onClosingInExpired(void*) {
   if (distance < MIN_DETECT_DISTANCE) {
     Serial.println("Lost enemy");
-    sumoStateMachine.immediateTransitionTo(FindOpponent);
+    sumoStateMachine.immediateTransitionTo(LOCK_LOST_STATE);
   } else {
     Serial.println("Continue with closein");
     sumoStateMachine.immediateTransitionTo(CloseIn);
@@ -375,14 +433,16 @@ void startAttack() {
   startMoving(MAX_SPEED, MAX_SPEED);
 
   //Ram him for max. 2 second. Then try to find him again
-  scheduleMethodCall(2000, timedTransition, &FindOpponent);
+  // OR, just keep on going while we're still locked on
+  //Another option would be to back off a bit, then ram again. Maybe the added impulse would buldge it more
+  //scheduleMethodCall(2000, timedTransition, &LOCK_LOST_STATE);
 }
 
 void onAttacking() {
   if (distance < MIN_DETECT_DISTANCE) {
     //completely lost the enemy -> start searching again
     Serial.println("Attack - lost enemy");
-    sumoStateMachine.immediateTransitionTo(FindOpponent);
+    sumoStateMachine.immediateTransitionTo(LOCK_LOST_STATE);
     return;
   }
   if (distance < MIN_ATTACK_DISTANCE) {
@@ -411,6 +471,11 @@ void goBack() {
   startMoving(-speedLeft, -speedRight);
     
   scheduleMethodCall(500, timedTransition, &FindOpponent);
+}
+
+void forfeit() {
+  Serial.println("State - Forfeit game");
+  startMoving(MAX_SPEED, MAX_SPEED);
 }
 
 void doNothing() {
