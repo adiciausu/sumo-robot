@@ -55,6 +55,11 @@ int rightLight;
 // Sumo methods forward-declaration
 void startMoving(int speedLeft, int speedRight);
 
+// LEDs
+#define LED_YELLOW 4
+#define LED_BLUE 10
+#define LED_RED 11
+
 // FSM Globals
 
 //'callback' is function pointer type, to a void function with one pointer parameter (void func(void*))
@@ -89,11 +94,18 @@ void timedTransition(void *pData);
 
 void onClosingInExpired(void *pData);
 
+void clearLEDs() {
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_BLUE, LOW);
+  digitalWrite(LED_RED, LOW);
+}
+
 void cleanupTimer() {
   targetTime = 0;
   pDeferredMethod = NULL;
   pData = NULL;
 
+  clearLEDs();
   //Motors don't usually need to be stopped. The next state will issue a new command for them anyway
   //startMoving(0, 0);
 }
@@ -124,9 +136,11 @@ void startQuick180() {
 #endif
 
 #define QUICK_ROTATE_SPEED 255
-#define QUICK_ROTATE_TIME 600
+#define QUICK_ROTATE_TIME 800
 
   Serial.println("State - Quick180");
+  digitalWrite(LED_YELLOW, HIGH);
+  
   startMoving(-QUICK_ROTATE_SPEED, QUICK_ROTATE_SPEED);
   scheduleMethodCall(QUICK_ROTATE_TIME, timedTransition, &FindOpponent);
   //scheduleMethodCall(QUICK_ROTATE_TIME, timedTransition, &DoNothing);
@@ -161,6 +175,8 @@ void reverseRotation(void*) {
 
 void startFindOpponent() {
   Serial.println("State - FindOpponent");
+  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_BLUE, HIGH);
   
   //Global variable
   SpinDirection = 1; //default - turn to the left (counterclockwise)
@@ -187,6 +203,8 @@ void onFindOponent() {
 
 void startCloseIn() {
   Serial.println("State - ClosingIn");
+  digitalWrite(LED_BLUE, HIGH);
+  
   startMoving(CLOSEIN_SPEED, CLOSEIN_SPEED);
 
   //unless something interrupts us, go back to the 'find oponent' states
@@ -224,6 +242,8 @@ void onClosingInExpired(void *pData) {
 
 void startAttack() {
   Serial.println("State - Attack");
+  digitalWrite(LED_RED, HIGH);
+  
   startMoving(MAX_SPEED, MAX_SPEED);
 
   //Ram him for max. 2 second. Then try to find him again
@@ -247,6 +267,10 @@ void onAttacking() {
 
 void goBack() {
   Serial.println("State - GoBack");
+  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_BLUE, HIGH);
+  digitalWrite(LED_RED, HIGH);
+  
   int speedLeft = MAX_SPEED/2;
   int speedRight = MAX_SPEED/2;
   if(sensorValues[0] <= MARGIN_TRESHOLD_L) {
@@ -301,8 +325,16 @@ void setup(){
   pinMode(MOTOR2_PIN1, OUTPUT);
   pinMode(MOTOR2_PIN2, OUTPUT);
 
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_BLUE, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+  
   //random number generator init
   randomSeed(analogRead(0));
+
+  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_BLUE, HIGH);
+  digitalWrite(LED_RED, HIGH);
   
 #ifndef NO_WAIT_AT_START
   Serial.println("Starting countdown");
@@ -310,6 +342,8 @@ void setup(){
 #endif
 
   Serial.println("Start!");
+
+  clearLEDs();
 }
 
 void loop(){
