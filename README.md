@@ -17,3 +17,9 @@ Trello board: https://trello.com/b/zBaGyVTT
 | RamBackwards     |  | Blink | Blink |
 | TurnOnBackLight - right    |  | X | Blink |
 | TurnOnBackLight - left    |  | Blink | X |
+
+# State diagram
+
+Still WIP
+
+https://goo.gl/2Rm1cV
