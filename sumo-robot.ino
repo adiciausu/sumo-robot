@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include <FiniteStateMachine.h>
 #include <QTRSensors.h>
-
+#include <Average.h>  
+ 
 /*
  *    DEBUGGING helpers. Uncomment to enable their behavior
  */
@@ -11,6 +12,7 @@
 //#define NO_WAIT_AT_START
 //#define NO_SWITCH_DIRECTION
 #define NO_GOBACK
+#define NO_FORFEIT
 //#define NO_MOVING
 //#define NO_SWEEP
 //#define NO_LIGHT_SENSORS
@@ -29,6 +31,8 @@
 
 #define SWEEP_SPEED 180
 #define SWEEP_TIME 300
+
+#define FIGHT_TIME_MILIS 60000;
 
 #define MIN_ATTACK_DISTANCE 300 // inverse proportion
 #define MIN_DETECT_DISTANCE 170 // inverse proportion
@@ -61,9 +65,13 @@ int SpinDirection = 1;
 // Global sensor data
 
 int distance;
+Average<int> distanceSeries(10);
+
 unsigned int sensorValues[NUM_SENSORS];
 int leftLight;
 int rightLight;
+
+int startedAtMiliseconds;
 
 // Sumo methods forward-declaration
 void startMoving(int speedLeft, int speedRight);
@@ -534,6 +542,8 @@ void setup(){
   delay(5000);
 #endif
 
+  startedAtMiliseconds = millis();
+
   Serial.println("Start!");
 
   clearLEDs();
@@ -544,7 +554,7 @@ void loop(){
   //Serial.println(millis());
 
   //Read all sensors
-  distance = analogRead(DISTANCE_PIN);
+  distance = readDistance();
   leftLight = analogRead(LIGHT_LEFT_SENSOR);
   rightLight = analogRead(LIGHT_RIGHT_SENSOR);
 
@@ -573,7 +583,61 @@ void loop(){
   }
 #endif
 
+#ifndef NO_FORFEIT
+  //global condition, will break out of any state
+  if (startedAtMiliseconds + FIGHT_TIME_MILIS < milis()) {
+    //action will really be executed in the .update() call below.
+    // This should override previous transition
+    sumoStateMachine.transitionTo(Forfeit);
+  }
+#endif
+
   sumoStateMachine.update();
+}
+
+void readDistance() {
+  int currentDistance = analogRead(DISTANCE_PIN);
+
+  return currentDistance;
+}
+
+
+void readDistanceV2() {
+  int currentDistance = analogRead(DISTANCE_PIN);
+  int lastDistance = distanceSeries.get(0)
+  distanceSeries.push(currentDistance); // self capped
+  
+  if (abs(currentDistance - lastDistance) > distanceSeries.stdDev() * 2) {
+      return lastDistance;
+  }
+  
+  return currentDistance;
+}
+
+
+void readDistanceV3() {
+  int currentDistance = analogRead(DISTANCE_PIN);
+  int meanDistance = distanceSeries.mean();
+  distanceSeries.push(currentDistance); // self capped
+  
+  if (abs(currentDistance - meanDistance) > distanceSeries.stdDev() * 2) {
+      return lastDistance;
+  }
+  
+  return currentDistance;
+}
+
+
+void readDistanceV4() {
+  int currentDistance = analogRead(DISTANCE_PIN);
+  int meanDistance = distanceSeries.mean();
+  distanceSeries.push(currentDistance); // self capped
+  
+  if (abs(currentDistance - meanDistance) > 100) {
+      return lastDistance;
+  }
+  
+  return currentDistance;
 }
 
 
