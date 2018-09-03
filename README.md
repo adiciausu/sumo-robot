@@ -19,3 +19,9 @@ Trello board: https://trello.com/b/zBaGyVTT
 | TurnOnBackLight - left    |  | Blink | X |
 | GoBack | X | X | X |
 | Forfeit | Blink | Blink | Blink |
+
+# State diagram
+
+Still WIP
+
+https://goo.gl/2Rm1cV
