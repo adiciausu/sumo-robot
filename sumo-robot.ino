@@ -6,16 +6,18 @@
  *    DEBUGGING helpers. Uncomment to enable their behavior
  */
 
-#define WITH_DO_NOTHING
-//#define NO_QUICK_180
+//#define WITH_DO_NOTHING
 //#define NO_WAIT_AT_START
 //#define NO_SWITCH_DIRECTION
+
+//#define NO_QUICK_180
 #define NO_GOBACK
+#define NO_FORFEIT
 //#define NO_MOVING
 //#define NO_SWEEP
 //#define NO_LIGHT_SENSORS
 
-//#define ONLY_ROTATE
+#define USE_SMOOTHING
 
 #define LOG_SENSOR_READINGS
 
@@ -29,6 +31,8 @@
 
 #define SWEEP_SPEED 180
 #define SWEEP_TIME 300
+
+#define FIGHT_TIME_MILIS 57000 //3 seconds to spare to exit the ring
 
 #define MIN_ATTACK_DISTANCE 300 // inverse proportion
 #define MIN_DETECT_DISTANCE 170 // inverse proportion
@@ -57,6 +61,7 @@ QTRSensorsRC qtrrc((unsigned char[]) {
 NUM_SENSORS, TIMEOUT);
 
 int SpinDirection = 1;
+int startedAtMiliseconds;
 
 // Global sensor data
 
@@ -64,6 +69,11 @@ int distance;
 unsigned int sensorValues[NUM_SENSORS];
 int leftLight;
 int rightLight;
+
+#define DISTANCE_SMOOTH_FACTOR 0.75
+#define LIGHT_SMOOTH_FACTOR 0.5
+
+int smooth(int data, float filterVal, float smoothedVal);
 
 // Sumo methods forward-declaration
 void startMoving(int speedLeft, int speedRight);
@@ -264,17 +274,13 @@ void startSweep() {
 bool willSwitchToAttackState() {
     if (distance >= MIN_ATTACK_DISTANCE) {
     //found the enemy!
-#ifndef ONLY_ROTATE    
     sumoStateMachine.immediateTransitionTo(Attack);
     return true;
-#endif
   }
   if (distance >= MIN_DETECT_DISTANCE) {
     //found the enemy!
-#ifndef ONLY_ROTATE    
     sumoStateMachine.immediateTransitionTo(CloseIn);
     return true;
-#endif
   }
 
   return false;
@@ -399,10 +405,8 @@ void startCloseIn() {
 void onClosingIn() {
   if (distance >= MIN_ATTACK_DISTANCE) {
     //found the enemy!
-#ifndef ONLY_ROTATE
     sumoStateMachine.immediateTransitionTo(Attack);
     return;
-#endif
   }
   //TODO: why is this being triggered?
   /*
@@ -475,6 +479,12 @@ void goBack() {
 
 void forfeit() {
   Serial.println("State - Forfeit game");
+  
+  int blink = getBlinkState();
+  digitalWrite(LED_YELLOW, blink);
+  digitalWrite(LED_BLUE, blink);
+  digitalWrite(LED_RED, blink);
+
   startMoving(MAX_SPEED, MAX_SPEED);
 }
 
@@ -484,7 +494,7 @@ void doNothing() {
   startMoving(0, 0);
   cleanupTimer();
  #else
-  sumoStateMachine.immediateTransitionTo(FindOponent);
+  sumoStateMachine.immediateTransitionTo(FindOpponent);
  #endif
 }
 
@@ -528,6 +538,8 @@ void setup(){
   digitalWrite(LED_YELLOW, HIGH);
   digitalWrite(LED_BLUE, HIGH);
   digitalWrite(LED_RED, HIGH);
+
+  startedAtMiliseconds = millis();
   
 #ifndef NO_WAIT_AT_START
   Serial.println("Starting countdown");
@@ -544,9 +556,21 @@ void loop(){
   //Serial.println(millis());
 
   //Read all sensors
-  distance = analogRead(DISTANCE_PIN);
-  leftLight = analogRead(LIGHT_LEFT_SENSOR);
-  rightLight = analogRead(LIGHT_RIGHT_SENSOR);
+  int rawDistance = analogRead(DISTANCE_PIN);
+  int rawLeftLight = analogRead(LIGHT_LEFT_SENSOR);
+  int rawRightLight = analogRead(LIGHT_RIGHT_SENSOR);
+
+#ifdef USE_SMOOTHING
+  distance = smooth(distance, DISTANCE_SMOOTH_FACTOR, rawDistance);
+
+  leftLight = smooth(leftLight, LIGHT_SMOOTH_FACTOR, rawLeftLight);
+  rightLight = smooth(rightLight, LIGHT_SMOOTH_FACTOR, rawRightLight);
+#else
+  distance = rawDistance;
+  leftLight = rawLeftLight;
+  rightLight = rawRightLight;
+#endif
+
 
   qtrrc.read(sensorValues);
 
@@ -570,6 +594,15 @@ void loop(){
   if (sensorValues[0] <= MARGIN_TRESHOLD_L || sensorValues[1] <= MARGIN_TRESHOLD_R) {
     //action will really be executed in the .update() call below
     sumoStateMachine.transitionTo(GoBack);
+  }
+#endif
+
+#ifndef NO_FORFEIT
+  //global condition, will break out of any state
+  if (startedAtMiliseconds + FIGHT_TIME_MILIS < millis()) {
+    //action will really be executed in the .update() call below.
+    // This should override previous transition
+    sumoStateMachine.transitionTo(Forfeit);
   }
 #endif
 
@@ -597,4 +630,18 @@ void startMoving(int speedLeft, int speedRight) {
     analogWrite(MOTOR2_PIN1, 0);
     analogWrite(MOTOR2_PIN2, -speedRight);
   }
+}
+
+int smooth(int data, float filterVal, float smoothedVal) {
+/*
+  if (filterVal > 1){      // check to make sure param's are within range
+    filterVal = .99;
+  }
+  else if (filterVal <= 0){
+    filterVal = 0;
+  }
+*/
+  smoothedVal = (data * (1 - filterVal)) + (smoothedVal  *  filterVal);
+
+  return (int)smoothedVal;
 }
