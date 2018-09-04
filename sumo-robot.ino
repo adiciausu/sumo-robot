@@ -10,8 +10,8 @@
 //#define NO_WAIT_AT_START
 //#define NO_SWITCH_DIRECTION
 
-//#define NO_QUICK_180
-#define NO_GOBACK
+#define NO_QUICK_180
+//#define NO_GOBACK
 #define NO_FORFEIT
 //#define NO_MOVING
 //#define NO_SWEEP
@@ -37,11 +37,11 @@
 #define MIN_ATTACK_DISTANCE 300 // inverse proportion
 #define MIN_DETECT_DISTANCE 170 // inverse proportion
 
-#define MARGIN_TRESHOLD_L 200 //80 (only white edge)
-#define MARGIN_TRESHOLD_R 750 //300 (only white edge)
+#define MARGIN_TRESHOLD_L 300 //80 (only white edge)
+#define MARGIN_TRESHOLD_R 300 //300 (only white edge)
 
-#define LIGHT_LIMIT_L 60
-#define LIGHT_LIMIT_R 60
+#define LIGHT_LIMIT_L 80
+#define LIGHT_LIMIT_R 80
 
 #define DISTANCE_PIN 0
 #define LIGHT_LEFT_SENSOR 1
